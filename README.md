@@ -1,0 +1,2 @@
+# votebox
+golang app
