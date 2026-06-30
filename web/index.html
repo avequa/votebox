@@ -7,9 +7,12 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
-<div class="container py-5" style="max-width: 560px;">
+<div class="container py-5" style="max-width: 640px;">
 
-  <h1 class="mb-4">votebox</h1>
+  <header class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0">votebox</h1>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadPolls()">Обновить</button>
+  </header>
 
   <div class="card mb-4">
     <div class="card-body">
@@ -19,70 +22,129 @@
       </div>
       <div class="mb-3">
         <input id="opts" class="form-control" placeholder="Варианты через запятую">
+        <div class="form-text">Например: Go, Python, Rust</div>
       </div>
       <button class="btn btn-primary" onclick="createPoll()">Создать</button>
+      <span id="createError" class="text-danger ms-2"></span>
     </div>
   </div>
 
-  <div id="poll"></div>
+  <h2 class="h5 mb-3">Опросы</h2>
+  <div id="polls" class="vstack gap-3"></div>
+  <p id="empty" class="text-muted d-none">Пока нет ни одного опроса.</p>
 
 </div>
 
 <script>
-let currentId = null;
+async function loadPolls() {
+  const res = await fetch('/api/polls');
+  const polls = await res.json();
+  renderPolls(polls || []);
+}
 
 async function createPoll() {
-  const question = document.getElementById('q').value;
-  const options = document.getElementById('opts').value.split(',').map(s => s.trim());
+  const errorEl = document.getElementById('createError');
+  errorEl.textContent = '';
+
+  const question = document.getElementById('q').value.trim();
+  const options = document.getElementById('opts').value
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+
+  if (question === '' || options.length < 2) {
+    errorEl.textContent = 'Нужен вопрос и минимум два варианта';
+    return;
+  }
 
   const res = await fetch('/api/polls', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, options })
   });
-  const poll = await res.json();
-  currentId = poll.id;
-  render(poll);
+
+  if (!res.ok) {
+    errorEl.textContent = 'Не удалось создать опрос';
+    return;
+  }
+
+  document.getElementById('q').value = '';
+  document.getElementById('opts').value = '';
+  loadPolls();
 }
 
-async function vote(optionId) {
-  await fetch('/api/polls/' + currentId + '/vote', {
+async function vote(pollId, optionId) {
+  const res = await fetch('/api/polls/' + pollId + '/vote', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ option_id: optionId })
   });
-  setTimeout(refresh, 150);
+
+  if (res.status === 503) return;
+  setTimeout(() => refreshPoll(pollId), 150);
 }
 
-async function refresh() {
-  const res = await fetch('/api/polls/' + currentId);
-  render(await res.json());
+async function refreshPoll(pollId) {
+  const res = await fetch('/api/polls/' + pollId);
+  if (!res.ok) return;
+  const poll = await res.json();
+  const card = document.querySelector('[data-poll="' + pollId + '"]');
+  if (card) card.outerHTML = pollCard(poll);
 }
 
-function render(poll) {
-  const total = poll.options.reduce((sum, o) => sum + o.votes, 0) || 1;
-  const rows = poll.options.map(o => {
-    const pct = Math.round(o.votes / total * 100);
+function renderPolls(polls) {
+  const container = document.getElementById('polls');
+  const empty = document.getElementById('empty');
+
+  if (polls.length === 0) {
+    container.innerHTML = '';
+    empty.classList.remove('d-none');
+    return;
+  }
+
+  empty.classList.add('d-none');
+  container.innerHTML = polls.map(pollCard).join('');
+}
+
+function pollCard(poll) {
+  const total = poll.options.reduce((sum, o) => sum + o.votes, 0);
+
+  const options = poll.options.map(o => {
+    const pct = total > 0 ? Math.round(o.votes / total * 100) : 0;
     return `
-      <li class="list-group-item">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <span>${o.text} — ${o.votes}</span>
-          <button class="btn btn-sm btn-outline-primary" onclick="vote('${o.id}')">Голос</button>
+      <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <span>${escapeHtml(o.text)}</span>
+          <button class="btn btn-sm btn-outline-primary"
+                  onclick="vote('${poll.id}', '${o.id}')">Голос</button>
         </div>
         <div class="progress" role="progressbar">
-          <div class="progress-bar" style="width: ${pct}%">${pct}%</div>
+          <div class="progress-bar" style="width: ${pct}%">${o.votes}</div>
         </div>
-      </li>`;
+      </div>`;
   }).join('');
 
-  document.getElementById('poll').innerHTML = `
-    <div class="card">
+  return `
+    <div class="card" data-poll="${poll.id}">
       <div class="card-body">
-        <h2 class="h5 card-title mb-3">${poll.question}</h2>
-        <ul class="list-group list-group-flush">${rows}</ul>
+        <div class="d-flex justify-content-between align-items-baseline mb-3">
+          <h3 class="h5 mb-0">${escapeHtml(poll.question)}</h3>
+          <small class="text-muted">всего: ${total}</small>
+        </div>
+        ${options}
       </div>
     </div>`;
 }
+
+function escapeHtml(s) {
+  return s
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+loadPolls();
 </script>
 </body>
 </html>
