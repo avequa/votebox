@@ -1,0 +1,6 @@
+/votebox
+*.exe
+
+.env
+.vscode/
+.idea/
